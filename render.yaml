@@ -6,10 +6,9 @@ services:
     plan: free
     healthCheckPath: /api/salud
     envVars:
+      # Cadena de conexión de Neon (rama 'produccion'); se pega en el panel de Render.
       - key: DATABASE_URL
-        fromDatabase:
-          name: sisalert-db
-          property: connectionString
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: CRON_SECRET
@@ -41,9 +40,3 @@ services:
         sync: false
       - key: GOOGLE_CALENDAR_ID
         sync: false
-
-databases:
-  - name: sisalert-db
-    plan: free
-    databaseName: sisalert
-    user: sisalert
