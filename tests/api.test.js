@@ -385,3 +385,112 @@ describe('alertas con tick(now) simulado', () => {
     assert.equal(r.status, 200);
   });
 });
+
+describe('respuesta a alertas: Cumplido / Pendiente / Notas', () => {
+  const { enlacesAlerta, crearToken, leerToken } = require('../server/services/enlaces');
+  const { plantillaAlerta } = require('../server/services/mailer');
+  const { enviarWhatsapp, normalizarTelefono } = require('../server/services/whatsapp');
+  let ocId, token;
+
+  async function nuevaOcurrencia(titulo) {
+    const c = await usuario.post('/api/actividades', { titulo, frecuencia: 'unica', fecha_inicio: '2031-09-01T08:00:00-05:00' });
+    assert.equal(c.status, 201, JSON.stringify(c.data));
+    const oc = (await usuario.get(`/api/actividades/${c.data.actividad.id}`)).data.ocurrencias[0];
+    return oc.id;
+  }
+  const postForm = (ruta, campos) => fetch(base + ruta, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(campos) });
+
+  before(async () => { ocId = await nuevaOcurrencia('Cambio de reactivos'); token = crearToken(ocId, usuarioId); });
+
+  test('token firmado: válido, manipulado e inválido', () => {
+    assert.deepEqual(leerToken(token), { ocurrenciaId: ocId, usuarioId });
+    assert.equal(leerToken(token.slice(0, -1) + (token.endsWith('A') ? 'B' : 'A')), null);
+    assert.equal(leerToken(`${ocId + 1}.${usuarioId}.${token.split('.')[2]}`), null);
+    assert.equal(leerToken('basura'), null);
+  });
+
+  test('el correo y el WhatsApp traen los tres enlaces (cumplido, pendiente, notas)', () => {
+    const e = enlacesAlerta(ocId, usuarioId);
+    const p = plantillaAlerta({ tipo: 'dia', titulo: 'X', venceEn: new Date(), ocurrenciaId: ocId, nombre: 'Laura', usuarioId });
+    for (const k of ['cumplido', 'pendiente', 'notas']) { assert.ok(p.html.includes(e[k]), 'html ' + k); assert.ok(p.text.includes(e[k]), 'texto ' + k); }
+    assert.match(p.html, /Cumplido/); assert.match(p.html, /Pendiente/); assert.match(p.html, /Notas/);
+  });
+
+  test('GET de las páginas no modifica nada y muestra los formularios', async () => {
+    for (const [ruta, txt] of [['', 'Cumplido'], ['/cumplido', 'type="file"'], ['/pendiente', 'sigue pendiente'], ['/notas', '<textarea']]) {
+      const r = await fetch(`${base}/r/${token}${ruta}`);
+      assert.equal(r.status, 200); assert.match(await r.text(), new RegExp(txt.replace(/[<>"=]/g, '.')));
+    }
+    assert.equal((await db.query('SELECT estado FROM ocurrencias WHERE id=$1', [ocId])).rows[0].estado, 'pendiente');
+    assert.equal((await db.query('SELECT count(*)::int n FROM ocurrencia_notas WHERE ocurrencia_id=$1', [ocId])).rows[0].n, 0);
+  });
+
+  test('enlace inválido -> 400; de otro responsable -> 403', async () => {
+    assert.equal((await fetch(`${base}/r/xyz/cumplido`)).status, 400);
+    const ajeno = crearToken(ocId, usuario2Id);
+    assert.equal((await fetch(`${base}/r/${ajeno}/notas`)).status, 403);
+  });
+
+  test('Notas: escribir una nota; vacía se rechaza; la alerta sigue pendiente', async () => {
+    assert.equal((await postForm(`/r/${token}/notas`, { texto: '   ' })).status, 400);
+    const r = await postForm(`/r/${token}/notas`, { texto: 'Falta reactivo de tinción' });
+    assert.equal(r.status, 200); assert.match(await r.text(), /Nota guardada/);
+    const n = (await usuario.get(`/api/ocurrencias/${ocId}/notas`)).data.notas;
+    assert.equal(n.length, 1); assert.equal(n[0].texto, 'Falta reactivo de tinción'); assert.equal(n[0].tipo, 'nota');
+    assert.equal((await db.query('SELECT estado FROM ocurrencias WHERE id=$1', [ocId])).rows[0].estado, 'pendiente');
+  });
+
+  test('Pendiente: registra el motivo y las alertas continúan', async () => {
+    const r = await postForm(`/r/${token}/pendiente`, { texto: 'Se hace mañana' });
+    assert.equal(r.status, 200); assert.match(await r.text(), /pendiente/i);
+    const n = (await usuario.get(`/api/ocurrencias/${ocId}/notas`)).data.notas;
+    assert.ok(n.some((x) => x.tipo === 'pendiente' && x.texto === 'Se hace mañana'));
+    const antes = (await db.query('SELECT count(*)::int n FROM alertas_log WHERE ocurrencia_id=$1', [ocId])).rows[0].n;
+    await alerts.tick(new Date('2031-09-01T09:00:00-05:00'));
+    const despues = (await db.query('SELECT count(*)::int n FROM alertas_log WHERE ocurrencia_id=$1', [ocId])).rows[0].n;
+    assert.ok(despues > antes, 'tras marcar pendiente siguen saliendo alertas');
+  });
+
+  test('API de notas: usuario ajeno -> 403; admin puede agregar', async () => {
+    assert.equal((await usuario2.get(`/api/ocurrencias/${ocId}/notas`)).status, 403);
+    assert.equal((await admin.post(`/api/ocurrencias/${ocId}/notas`, { texto: 'Revisado por admin' })).status, 201);
+    assert.equal((await admin.post(`/api/ocurrencias/${ocId}/notas`, { texto: '' })).status, 400);
+  });
+
+  test('Cumplido: sin foto no cumple; con foto cumple y detiene las alertas', async () => {
+    const sin = await fetch(`${base}/r/${token}/cumplido`, { method: 'POST', body: new FormData() });
+    assert.equal(sin.status, 400);
+    assert.equal((await db.query('SELECT estado FROM ocurrencias WHERE id=$1', [ocId])).rows[0].estado, 'pendiente');
+    const con = await fetch(`${base}/r/${token}/cumplido`, { method: 'POST', body: formFoto('Hecho') });
+    assert.equal(con.status, 200); assert.match(await con.text(), /cumplida/i);
+    const o = (await db.query('SELECT estado, evidencia_mime, length(evidencia) AS bytes FROM ocurrencias WHERE id=$1', [ocId])).rows[0];
+    assert.equal(o.estado, 'cumplida'); assert.equal(o.evidencia_mime, 'image/png'); assert.ok(o.bytes > 0);
+    const antes = (await db.query('SELECT count(*)::int n FROM alertas_log WHERE ocurrencia_id=$1', [ocId])).rows[0].n;
+    await alerts.tick(new Date('2031-09-02T09:00:00-05:00'));
+    assert.equal((await db.query('SELECT count(*)::int n FROM alertas_log WHERE ocurrencia_id=$1', [ocId])).rows[0].n, antes);
+    const otra = await fetch(`${base}/r/${token}/cumplido`, { method: 'POST', body: formFoto() });
+    assert.match(await otra.text(), /ya fue marcada/i);
+  });
+
+  test('WhatsApp: normaliza el número con + y detecta rechazos de CallMeBot', async () => {
+    assert.equal(normalizarTelefono('300 123 4567'), '+573001234567');
+    assert.equal(normalizarTelefono('+57 300-123-4567'), '+573001234567');
+    assert.equal(normalizarTelefono(''), null);
+    const prevWa = process.env.WA_DRY_RUN, prevFetch = global.fetch; let ultima;
+    process.env.WA_DRY_RUN = 'false';
+    try {
+      global.fetch = async (u) => { ultima = String(u); return { ok: true, status: 200, text: async () => '<p>Message queued. You will receive it in a few seconds.</p>' }; };
+      let r = await enviarWhatsapp({ phone: '573001234567', apikey: ' 123456 ', text: 'Hola ✓ link' });
+      assert.equal(r.ok, true);
+      assert.match(ultima, /phone=%2B573001234567/); assert.match(ultima, /apikey=123456&?/);
+      global.fetch = async () => ({ ok: true, status: 200, text: async () => 'ERROR: APIKey is invalid or phone is not activated' });
+      r = await enviarWhatsapp({ phone: '573001234567', apikey: '000', text: 'x' });
+      assert.equal(r.ok, false); assert.match(r.detalle, /invalid/i);
+      global.fetch = async () => ({ ok: false, status: 203, text: async () => 'Forbidden' });
+      assert.equal((await enviarWhatsapp({ phone: '573001234567', apikey: '1', text: 'x' })).ok, false);
+      global.fetch = async () => { throw new Error('timeout'); };
+      assert.equal((await enviarWhatsapp({ phone: '573001234567', apikey: '1', text: 'x' })).ok, false);
+      assert.equal((await enviarWhatsapp({ phone: '573001234567', apikey: '', text: 'x' })).omitido, true);
+    } finally { global.fetch = prevFetch; process.env.WA_DRY_RUN = prevWa; }
+  });
+});

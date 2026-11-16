@@ -77,6 +77,29 @@ export async function ocurrencia(c, id) {
       try { await api('/ocurrencias/' + id, { method: 'DELETE' }); toast('Repetición eliminada'); go('#/actividades'); } catch (ex) { toast(ex.message, 'error'); } } }, icon('trash'), 'Eliminar repetición'));
     if (adm.length) parts.push(h('section', { class: 'card', style: 'margin-top:1.25rem', 'aria-label': 'Gestión' }, h('h2', {}, 'Gestión'), adm));
   }
+  // Notas de la actividad (todas las personas con acceso pueden leer y agregar)
+  {
+    const lista = h('ul', { class: 'list', 'data-testid': 'notas-lista' });
+    const area = h('textarea', { id: 'nota-texto', 'data-testid': 'nota-texto', maxlength: '2000', placeholder: 'Escribe una nota sobre esta actividad' });
+    const pintar = (notas) => {
+      lista.replaceChildren(...(notas.length ? notas.map((n) => h('li', { class: 'item', 'data-testid': 'nota-item' },
+        h('div', { class: 'grow' }, h('span', { class: 't' }, n.texto || '(sin texto)'),
+          h('span', { class: 'm' }, `${n.usuario_nombre || 'Usuario'} · ${fechaHora(n.creado_en)}${n.tipo === 'pendiente' ? ' · marcada pendiente' : ''}`))))
+        : [h('li', { class: 'm', 'data-testid': 'notas-vacio' }, 'Aún no hay notas.')]));
+    };
+    const cargar = async () => { try { pintar(listOf(await api(`/ocurrencias/${id}/notas`), 'notas')); } catch { pintar([]); } };
+    const btnNota = h('button', { class: 'btn', type: 'submit', 'data-testid': 'nota-guardar' }, 'Guardar nota');
+    const formNota = h('form', { novalidate: true, onsubmit: async (ev) => {
+      ev.preventDefault(); const t = area.value.trim();
+      if (!t) { toast('Escribe el texto de la nota.', 'error'); return area.focus(); }
+      busy(btnNota, true, 'Guardando…');
+      try { await api(`/ocurrencias/${id}/notas`, { method: 'POST', body: { texto: t } }); area.value = ''; toast('Nota guardada'); await cargar(); }
+      catch (ex) { toast(ex.message, 'error'); }
+      busy(btnNota, false);
+    } }, h('div', { class: 'field' }, h('label', { for: 'nota-texto' }, 'Agregar nota'), area), btnNota);
+    parts.push(h('section', { class: 'card', style: 'margin-top:1.25rem', 'aria-label': 'Notas', 'data-testid': 'notas' }, h('h2', {}, 'Notas'), lista, formNota));
+    cargar();
+  }
   if (isAdmin()) {
     let log = [];
     try { log = listOf(await api('/alertas?ocurrencia_id=' + id), 'alertas'); } catch { /* opcional */ }

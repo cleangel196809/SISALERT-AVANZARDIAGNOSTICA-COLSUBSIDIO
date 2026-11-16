@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS alertas_log (
   ok BOOLEAN NOT NULL DEFAULT FALSE,
   detalle TEXT
 );
+CREATE TABLE IF NOT EXISTS ocurrencia_notas (
+  id SERIAL PRIMARY KEY,
+  ocurrencia_id INTEGER NOT NULL REFERENCES ocurrencias(id) ON DELETE CASCADE,
+  usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  tipo TEXT NOT NULL DEFAULT 'nota' CHECK (tipo IN ('nota','pendiente')),
+  texto TEXT,
+  creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_notas_ocurrencia ON ocurrencia_notas (ocurrencia_id, creado_en);
 CREATE INDEX IF NOT EXISTS idx_ocurrencias_estado_vence ON ocurrencias (estado, vence_en);
 CREATE INDEX IF NOT EXISTS idx_alertas_log_ocurrencia ON alertas_log (ocurrencia_id, tipo);
 `;

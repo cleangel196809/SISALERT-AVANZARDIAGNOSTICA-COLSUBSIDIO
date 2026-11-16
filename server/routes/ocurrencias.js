@@ -78,6 +78,26 @@ r.post('/:id/cumplir', (req, res, next) => {
   res.json({ ocurrencia: await cargar(req, id) });
 }));
 
+r.get('/:id/notas', ah(async (req, res) => {
+  const id = entero(req.params.id); if (!id) throw bad('Id inválido');
+  await cargar(req, id);
+  const q = await db.query(
+    `SELECT n.id, n.tipo, n.texto, n.creado_en, u.nombre AS usuario_nombre
+       FROM ocurrencia_notas n LEFT JOIN usuarios u ON u.id=n.usuario_id WHERE n.ocurrencia_id=$1 ORDER BY n.creado_en DESC`, [id]);
+  res.json({ notas: q.rows });
+}));
+
+r.post('/:id/notas', ah(async (req, res) => {
+  const id = entero(req.params.id); if (!id) throw bad('Id inválido');
+  await cargar(req, id);
+  const texto = String(req.body?.texto ?? '').trim().slice(0, 2000);
+  if (!texto) throw bad('Escriba el texto de la nota');
+  const tipo = req.body?.tipo === 'pendiente' ? 'pendiente' : 'nota';
+  const q = await db.query(`INSERT INTO ocurrencia_notas (ocurrencia_id, usuario_id, tipo, texto) VALUES ($1,$2,$3,$4) RETURNING id, tipo, texto, creado_en`,
+    [id, req.usuario.id, tipo, texto]);
+  res.status(201).json({ nota: { ...q.rows[0], usuario_nombre: req.usuario.nombre } });
+}));
+
 r.get('/:id/evidencia', ah(async (req, res) => {
   const id = entero(req.params.id); if (!id) throw bad('Id inválido');
   await cargar(req, id);

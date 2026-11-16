@@ -3,6 +3,7 @@ const db = require('../db');
 const { inicioDiaLocal } = require('../tiempo');
 const { enviarCorreo, plantillaAlerta } = require('./mailer');
 const { enviarWhatsapp } = require('./whatsapp');
+const { formatoLargo } = require('../tiempo');
 
 const HORA_PREVIAS_MS = 7 * 3600 * 1000;   // d3/d2/d1 desde las 07:00 locales
 const DIA_MS = 86400000;
@@ -38,8 +39,8 @@ async function registrar(ocurrenciaId, tipo, canal, destino, now, r) {
 }
 
 async function enviarAlerta(o, tipo, now) {
-  const { html, text, url, encabezado } = plantillaAlerta({
-    tipo, titulo: o.titulo, venceEn: o.vence_en, ocurrenciaId: o.id, nombre: o.responsable_nombre });
+  const { html, text, enlaces, encabezado } = plantillaAlerta({
+    tipo, titulo: o.titulo, venceEn: o.vence_en, ocurrenciaId: o.id, nombre: o.responsable_nombre, usuarioId: o.responsable_id });
   const resultados = [];
   // Correo siempre se intenta/registra; un fallo no bloquea WhatsApp.
   try {
@@ -50,7 +51,7 @@ async function enviarAlerta(o, tipo, now) {
   try {
     const r = await enviarWhatsapp({
       phone: o.responsable_whatsapp, apikey: o.responsable_apikey,
-      text: `SISALERT - ${encabezado}\n${o.titulo}\nMarcar como realizada: ${url}` });
+      text: `SISALERT - ${encabezado}\n${o.titulo}\nVence: ${formatoLargo(o.vence_en)}\n\n1) CUMPLIDO (con foto): ${enlaces.cumplido}\n2) PENDIENTE: ${enlaces.pendiente}\n3) NOTAS: ${enlaces.notas}` });
     if (!r.omitido) {
       await registrar(o.id, tipo, 'whatsapp', o.responsable_whatsapp, now, r);
       resultados.push({ canal: 'whatsapp', ...r });
@@ -69,7 +70,7 @@ async function tick(now = new Date()) {
   try {
     const horizonte = new Date(now.getTime() + 4 * DIA_MS);
     const r = await db.query(
-      `SELECT o.id, o.vence_en, a.titulo, u.nombre AS responsable_nombre, u.email AS responsable_email,
+      `SELECT o.id, o.vence_en, a.titulo, u.id AS responsable_id, u.nombre AS responsable_nombre, u.email AS responsable_email,
               u.whatsapp AS responsable_whatsapp, u.callmebot_apikey AS responsable_apikey
          FROM ocurrencias o
          JOIN actividades a ON a.id=o.actividad_id AND a.activa

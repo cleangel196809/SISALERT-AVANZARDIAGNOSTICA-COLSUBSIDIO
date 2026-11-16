@@ -25,6 +25,7 @@ function crearApp() {
   api.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
   app.use('/api', api);
 
+  app.use('/r', require('./routes/responder'));
   app.use(express.static(PUBLIC_DIR));
   app.get('*', (req, res) => {
     const index = path.join(PUBLIC_DIR, 'index.html');

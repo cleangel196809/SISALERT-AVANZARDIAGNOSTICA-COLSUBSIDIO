@@ -124,9 +124,9 @@ r.post('/:id/probar-alerta', requerirAdmin, ah(async (req, res) => {
   if (!id) throw bad('Id inválido');
   const u = (await db.query('SELECT * FROM usuarios WHERE id=$1', [id])).rows[0];
   if (!u) throw new HttpError(404, 'Usuario no encontrado');
-  const p = plantillaAlerta({ tipo: 'prueba', titulo: 'Alerta de prueba', venceEn: new Date(), ocurrenciaId: 0, nombre: u.nombre });
+  const p = plantillaAlerta({ tipo: 'prueba', titulo: 'Alerta de prueba', venceEn: new Date(), ocurrenciaId: 0, nombre: u.nombre, usuarioId: u.id });
   const correo = await enviarCorreo({ to: u.email, subject: '[SISALERT] Mensaje de prueba', html: p.html, text: p.text });
-  const wa = await enviarWhatsapp({ phone: u.whatsapp, apikey: u.callmebot_apikey, text: 'SISALERT - Mensaje de prueba. Si lo recibe, las alertas por WhatsApp funcionan.' });
+  const wa = await enviarWhatsapp({ phone: u.whatsapp, apikey: u.callmebot_apikey, text: 'SISALERT - Mensaje de prueba. Si lo recibe, las alertas por WhatsApp funcionan. Las alertas reales traen tres enlaces: Cumplido, Pendiente y Notas.' });
   res.json({ correo, whatsapp: wa });
 }));
 

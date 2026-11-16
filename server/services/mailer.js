@@ -1,6 +1,7 @@
 'use strict';
 const nodemailer = require('nodemailer');
 const { formatoLargo } = require('../tiempo');
+const { enlacesAlerta } = require('./enlaces');
 
 let transporte = null;
 const esDry = () => String(process.env.MAIL_DRY_RUN).toLowerCase() === 'true';
@@ -28,8 +29,9 @@ const ENCABEZADOS = {
   prueba: 'Mensaje de prueba de SISALERT',
 };
 
-function plantillaAlerta({ tipo, titulo, venceEn, ocurrenciaId, nombre }) {
-  const url = `${appUrl()}/#/ocurrencia/${ocurrenciaId}`;
+function plantillaAlerta({ tipo, titulo, venceEn, ocurrenciaId, nombre, usuarioId }) {
+  const enl = enlacesAlerta(ocurrenciaId, usuarioId);
+  const url = enl.cumplido;
   const encabezado = ENCABEZADOS[tipo] || ENCABEZADOS.dia;
   const html = `<!doctype html><html lang="es"><body style="margin:0;background:#F4F5F7;font-family:Arial,Helvetica,sans-serif;color:#1b1b1b">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
@@ -41,11 +43,16 @@ function plantillaAlerta({ tipo, titulo, venceEn, ocurrenciaId, nombre }) {
 <h2 style="margin:0 0 8px;color:#003B71">${escapar(titulo)}</h2>
 <p style="margin:0 0 20px">Vence: <strong>${escapar(venceEn ? formatoLargo(venceEn) : '-')}</strong></p>
 <p style="margin:0 0 24px">Recibirá recordatorios hasta que suba la foto de evidencia.</p>
-<a href="${url}" style="background:#00A859;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:bold;display:inline-block">Marcar como realizada</a>
-<p style="margin:24px 0 0;font-size:12px;color:#666">Si el botón no funciona, copie este enlace: ${url}</p></td></tr>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+<td style="padding:0 8px 8px 0"><a href="${enl.cumplido}" style="background:#00A859;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:bold;display:inline-block">&#10003; Cumplido</a></td>
+<td style="padding:0 8px 8px 0"><a href="${enl.pendiente}" style="background:#F5A300;color:#1b1b1b;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:bold;display:inline-block">&#8987; Pendiente</a></td>
+<td style="padding:0 0 8px 0"><a href="${enl.notas}" style="background:#003B71;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:bold;display:inline-block">&#9998; Notas</a></td>
+</tr></table>
+<p style="margin:16px 0 0;font-size:12px;color:#666">Cumplido: suba la foto de evidencia y se detienen las alertas. Pendiente: avisa que a&uacute;n no se hace (las alertas contin&uacute;an). Notas: deje un mensaje sobre la actividad.</p>
+</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = `${encabezado}\n\n${titulo}\nVence: ${venceEn ? formatoLargo(venceEn) : '-'}\nMarcar como realizada: ${url}`;
-  return { html, text, url, encabezado };
+  const text = `${encabezado}\n\n${titulo}\nVence: ${venceEn ? formatoLargo(venceEn) : '-'}\n\nCumplido: ${enl.cumplido}\nPendiente: ${enl.pendiente}\nNotas: ${enl.notas}`;
+  return { html, text, url, encabezado, enlaces: enl };
 }
 
 /** Devuelve {ok, detalle}. Nunca lanza. */
